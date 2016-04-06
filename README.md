@@ -75,6 +75,7 @@ But which of two LANs contain this address? They both use the same prefix!
 Having route 2001:db8:1:2::/64 on both eth1 and eth2 won't work, as such routes will collide, and kernel will send packets to only one of interfaces.
 
 This is where ndprbrd comes to rescue. It has 2 modes, using TAP interface (the recommended mode), and not using it.
+
 ```
                        | eth0
                  +-----+-----+
