@@ -18,13 +18,13 @@
 import argparse
 import logging
 import logging.handlers
-import netaddr
-import pytun
-import scapy.all
 import socket
 import subprocess
 import time
 import threading
+
+import netaddr
+import scapy.all
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--interface', required=True, action='append')
@@ -34,6 +34,9 @@ parser.add_argument('--expire', default=300, type=float)
 parser.add_argument('--protocol', default=100, type=int)
 parser.add_argument('--tun', default='ndprbrd')
 args = parser.parse_args()
+
+if args.tun != '':
+  import pytun
 
 logger = logging.getLogger('MyLogger')
 logger.addHandler(logging.handlers.SysLogHandler(address='/dev/log'))
@@ -115,26 +118,34 @@ fill_routes()
 for iface in args.interface:
   Watcher(iface).start()
 
-tun = pytun.TunTapDevice(name=args.tun, flags=pytun.IFF_TAP)
-tun.up()
-replace_route(args.prefix, args.tun)
-while True:
-  buf = tun.read(tun.mtu)
-  eth = scapy.all.Ether(buf[4:])
-  logger.debug('ndprbrd: Received {}'.format(repr(eth)))
-  if scapy.all.IPv6 not in eth:
-    continue
-  # Only allow Neighbor Solicitation on this tunnel
-  if scapy.all.ICMPv6ND_NS not in eth:
-    continue
-  if netaddr.IPAddress(eth[scapy.all.ICMPv6ND_NS].tgt) not in args.prefix:
-    continue
-  logger.debug('ndprbrd: Sending Neighbor Solicitation about {}'.format(eth[scapy.all.ICMPv6ND_NS].tgt))
-  for iface in args.interface:
-    eth2 = eth.copy()
-    eth2.src = scapy.all.get_if_hwaddr(iface)
-    eth2[scapy.all.IPv6].src = next(addr for addr, num, intf in scapy.all.in6_getifaddr() if intf == iface and netaddr.IPAddress(addr) in netaddr.IPNetwork('fe80::/10'))
-    if scapy.all.ICMPv6NDOptSrcLLAddr in eth2:
-      eth2[scapy.all.ICMPv6NDOptSrcLLAddr].lladdr = eth2.src
-    del eth2[scapy.all.ICMPv6ND_NS].cksum
-    scapy.all.sendp(eth2, iface=iface, verbose=False)
+if args.tun != '':
+  tun = pytun.TunTapDevice(name=args.tun, flags=pytun.IFF_TAP)
+  tun.up()
+  replace_route(args.prefix, args.tun)
+  while True:
+    cleanup_routes()
+    buf = tun.read(tun.mtu)
+    eth = scapy.all.Ether(buf[4:])
+    logger.debug('ndprbrd: Received {}'.format(repr(eth)))
+    if scapy.all.IPv6 not in eth:
+      continue
+    # Only allow Neighbor Solicitation on this tunnel
+    if scapy.all.ICMPv6ND_NS not in eth:
+      continue
+    if netaddr.IPAddress(eth[scapy.all.ICMPv6ND_NS].tgt) not in args.prefix:
+      continue
+    logger.debug('ndprbrd: Sending Neighbor Solicitation about {}'.format(eth[scapy.all.ICMPv6ND_NS].tgt))
+    for iface in args.interface:
+      eth2 = eth.copy()
+      eth2.src = scapy.all.get_if_hwaddr(iface)
+      eth2[scapy.all.IPv6].src = next(addr for addr, num, intf in scapy.all.in6_getifaddr() if intf == iface and netaddr.IPAddress(addr) in netaddr.IPNetwork('fe80::/10'))
+      if scapy.all.ICMPv6NDOptSrcLLAddr in eth2:
+        eth2[scapy.all.ICMPv6NDOptSrcLLAddr].lladdr = eth2.src
+      del eth2[scapy.all.ICMPv6ND_NS].cksum
+      scapy.all.sendp(eth2, iface=iface, verbose=False)
+else:
+  while True:
+    cleanup_routes()
+    for iface in args.interface:
+      replace_route(args.prefix, iface)
+      time.sleep(1)
