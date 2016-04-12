@@ -3,7 +3,7 @@
 Disclaimer: This is not an official Google product.
 
 This daemon has a very specific purpose: to give the same IPv6 prefix /64 to several network interfaces using radvd without creating L2 bridge and without need to configure DHCPv6.
-It's designed to use together with [ndppd](https://github.com/DanielAdolfsson/ndppd) for case if ISP gives single /64 without delegating a bigger prefix to your router.
+It's designed to be used together with [ndppd](https://github.com/DanielAdolfsson/ndppd) for case if ISP gives single /64 without delegating a bigger prefix to your router.
 
 Below are 2 sample setups - the simple one which doesn't need ndprbrd, and the more complicated one which makes use of it.
 The simple setup sets the base for the more complicated one.
@@ -38,7 +38,7 @@ The simple setup sets the base for the more complicated one.
 * ISP sends NDP neigbor solicitation to the wire
 * ndppd sees it, and replies to it
   * depending on whether `auto` or `static` is used, ndppd behaves slightly differently, but I don't want to go to such details. Both modes work.
-* Router sends solicitation to LAN, gets response (neighbor advertisement), sends packets to there, and everyone is happy
+* Router sends solicitation to LAN, gets response (neighbor advertisement), sends packets to there, and everyone is happy.
 
 ## Setup with makes use of ndprbrd
 
