@@ -130,3 +130,16 @@ So when the neighbor solicitation is sent, there is a chance that it's sent to t
 Note that when an address is discovered in some LAN, due to the timeout mechanism described above, that address will continue working until it disappears from that LAN for 5 minutes.
 However, several first packets are likely to be dropped.
 In TAP mode they are still likely to be dropped, but number of first packets dropped is smaller in TAP mode.
+
+## Usage
+
+`./ndprbrd.py --interface=eth1 --interface=eth2 --prefix=2001:db8:1:2::/64`
+
+To change name of TAP interface, use `--tun=foo`.
+To use the mode without TAP interface, use `--tun=`.
+
+## Requirements
+
+* Python 2
+* [Scapy](https://pypi.python.org/pypi/scapy)
+* [python-pytun](https://pypi.python.org/pypi/python-pytun) (optional)
