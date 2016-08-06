@@ -21,3 +21,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED true)
 find_package(Qt5Network)
 add_executable(ndprbrd ndprbrd.cpp)
 target_link_libraries(ndprbrd Qt5::Network)
+
+include(GNUInstallDirs)
+install(TARGETS ndprbrd RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
