@@ -93,7 +93,7 @@ When Router tries to send a packet, it sends neighbor solicitation to tap0, and 
 Let's say LAN-1 replies with neighbor advertisement. Then ndprbrd sees it, and adds a static route to the advertised address 2001:db8:1:2::33 to interface eth1.
 From this point all packets to that address will go directly to eth1, and not to eth2, and not even to tap0.
 
-If at some point later advertisements about 2001:db8:1:2::33 stopped coming from eth1, the static route is removed after a timeout (5 minutes by default).
+If at some point later advertisements about 2001:db8:1:2::33 stopped coming from eth1, the static route is removed after a timeout (10 minutes by default).
 Then, if a new packet comes to that address, all LANs will be used to discover it again.
 
 Only absence of traffic will trigger such timeout, because with traffic the neighbor solicitations are still sent from time to time.
@@ -127,19 +127,17 @@ If Linux is compiled without TUN/TAP interface support, another mode is availabl
 In this mode, ndprbrd every second switches the route to 2001:db8:1:2::/64 from one interface to another.
 So when the neighbor solicitation is sent, there is a chance that it's sent to the correct LAN, in which case ndprbrd will see the neighbor advertisement, and add the route for that address.
 
-Note that when an address is discovered in some LAN, due to the timeout mechanism described above, that address will continue working until it disappears from that LAN for 5 minutes.
+Note that when an address is discovered in some LAN, due to the timeout mechanism described above, that address will continue working until it disappears from that LAN for 10 minutes.
 However, several first packets are likely to be dropped.
 In TAP mode they are still likely to be dropped, but number of first packets dropped is smaller in TAP mode.
 
 ## Usage
 
-`./ndprbrd.py --interface=eth1 --interface=eth2 --prefix=2001:db8:1:2::/64`
+`./ndprbrd --interface=eth1 --interface=eth2 --prefix=2001:db8:1:2::/64`
 
 To change name of TAP interface, use `--tun=foo`.
-To use the mode without TAP interface, use `--tun=`.
+To use the mode without TAP interface, use `--pendulum`.
 
 ## Requirements
 
-* Python 2
-* [Scapy](https://pypi.python.org/pypi/scapy)
-* [python-pytun](https://pypi.python.org/pypi/python-pytun) (optional)
+* Qt Network
