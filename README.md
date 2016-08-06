@@ -165,4 +165,6 @@ interface, use `--pendulum`.
 
 ## Requirements
 
+*   Linux
 *   Qt Network
+*   Compiler with C++11 support
