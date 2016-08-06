@@ -12,36 +12,36 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <QCommandLineParser>
 #include <QCoreApplication>
-#include <QDateTime>
-#include <QHash>
-#include <QHostAddress>
-#include <QNetworkInterface>
-#include <QProcess>
-#include <QSocketNotifier>
+#include <QCommandLineParser>
 #include <QTextStream>
+#include <QHostAddress>
+#include <QProcess>
 #include <QTimer>
+#include <QHash>
+#include <QNetworkInterface>
+#include <QSocketNotifier>
+#include <QDateTime>
 
 #include <chrono>
-#include <cstdlib>
-#include <cstring>
+#include <vector>
 #include <list>
 #include <memory>
-#include <vector>
+#include <cstdlib>
+#include <cstring>
 
-#include <fcntl.h>
-#include <linux/if.h>
-#include <linux/if_packet.h>
-#include <linux/if_tun.h>
-#include <net/ethernet.h>
-#include <netdb.h>
-#include <netinet/in.h>
-#include <sys/ioctl.h>
-#include <sys/socket.h>
-#include <sys/stat.h>
-#include <sys/types.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <netdb.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/ioctl.h>
+#include <sys/stat.h>
+#include <netinet/in.h>
+#include <linux/if.h>
+#include <linux/if_tun.h>
+#include <linux/if_packet.h>
+#include <net/ethernet.h>
 
 class PrefixList {
  public:
