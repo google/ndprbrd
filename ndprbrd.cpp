@@ -233,25 +233,13 @@ class Tunnel {
     ll.sll_protocol = ETH_P_IPV6;
     ll.sll_halen = 6;
     std::memcpy(ll.sll_addr, buf, ETH_ALEN);
-    // Cheat: don't count checksum fully for every interface, but reuse the
-    // existing one
-    uint32_t sum = *reinterpret_cast<uint16_t*>(buf + 56);
-    sum = ~sum;
-    if (len == 86) {
-      for (int i = 0; i < 6; i += 2) {
-        sum -= *reinterpret_cast<uint16_t*>(buf + 80 + i);
-      }
-    }
-    for (int i = 0; i < 16; i += 2) {
-      sum -= *reinterpret_cast<uint16_t*>(buf + 22 + i);
-    }
     for (const QNetworkInterface& iface : interfaces_) {
-      sendTo(iface, &ll, buf, len, sum);
+      sendTo(iface, &ll, buf, len);
     }
   }
 
   void sendTo(const QNetworkInterface& iface, sockaddr_ll* ll, char* buf,
-              ssize_t len, uint32_t sum) {
+              ssize_t len) {
     ll->sll_ifindex = iface.index();
     ifreq ifr{};
     std::strncpy(ifr.ifr_name, iface.name().toUtf8().constData(), IFNAMSIZ);
@@ -261,9 +249,6 @@ class Tunnel {
     if (len == 86) {
       // Source link-layer address in Options of ICMPv6
       std::memcpy(buf + 80, ifr.ifr_hwaddr.sa_data, 6);
-      for (int i = 0; i < 6; i += 2) {
-        sum += *reinterpret_cast<uint16_t*>(buf + 80 + i);
-      }
     }
 
     QHostAddress localIp;
@@ -292,8 +277,11 @@ class Tunnel {
         buf + 22,
         reinterpret_cast<sockaddr_in6*>(result->ai_addr)->sin6_addr.s6_addr,
         16);
-    for (int i = 0; i < 16; i += 2) {
-      sum += *reinterpret_cast<uint16_t*>(buf + 22 + i);
+    uint32_t sum = htons(0x3A);
+    *reinterpret_cast<uint16_t*>(buf + 56) = 0;
+    sum += *reinterpret_cast<uint16_t*>(buf + 18); // length
+    for (int i = 22; i < len; i += 2) {
+      sum += *reinterpret_cast<uint16_t*>(buf + i);
     }
     while (sum >> 16) sum = (sum >> 16) + (sum & 0xffff);
     *reinterpret_cast<uint16_t*>(buf + 56) = ~static_cast<uint16_t>(sum);
