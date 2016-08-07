@@ -1,3 +1,5 @@
+[![Build Status](https://img.shields.io/travis/google/ndprbrd/master.svg)](https://travis-ci.org/google/ndprbrd)
+
 # ndprbrd - NDP Routing Bridge Daemon.
 
 Disclaimer: This is not an official Google product.
