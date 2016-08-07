@@ -163,6 +163,36 @@ number of first packets dropped is smaller in TAP mode.
 To change name of TAP interface, use `--tun=foo`. To use the mode without TAP
 interface, use `--pendulum`.
 
+Sample config of ndppd:
+
+```
+route-ttl 30000
+proxy eth0 {
+  router yes
+  timeout 500
+  ttl 30000
+  rule 2001:db8:1:2::/64 {
+    auto
+  }
+}
+proxy eth1 {
+  router yes
+  timeout 500
+  ttl 30000
+  rule 2001:db8:1:2::/64 {
+    auto
+  }
+}
+proxy eth2 {
+  router yes
+  timeout 500
+  ttl 30000
+  rule 2001:db8:1:2::/64 {
+    auto
+  }
+}
+```
+
 ## Requirements
 
 *   Linux
