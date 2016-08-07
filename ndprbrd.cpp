@@ -149,7 +149,7 @@ class SocketWatcher {
     ssize_t len = ::recvfrom(sock, buf, sizeof buf, /* flags = */ 0,
                              reinterpret_cast<sockaddr*>(&addr), &addrLen);
     if (len < 24) return;
-    if (buf[0] != 0x88) return;  // Neighbor Advertisement, RFC 4861
+    if (buf[0] != '\x88') return;  // Neighbor Advertisement, RFC 4861
     QHostAddress remoteAddr(reinterpret_cast<quint8*>(buf + 8));
     if (!prefixes_->contains(remoteAddr)) return;
     routes_->learn(remoteAddr, iface_);
@@ -220,12 +220,12 @@ class Tunnel {
     char buf[86];
     ssize_t len = ::read(tap, buf, sizeof buf);
     if (len < 78) return;
-    // EtherType: IPv6
-    if (buf[12] != 0x86 || buf[13] != 0xDD) return;
+    // Ethertype: IPv6
+    if (buf[12] != '\x86' || buf[13] != '\xDD') return;
     // IPv6 Next Header: ICMPv6
-    if (buf[20] != 0x3A) return;
+    if (buf[20] != '\x3A') return;
     // ICMPv6 Type: Neighbor Solicitation
-    if (buf[54] != 0x87) return;
+    if (buf[54] != '\x87') return;
     QHostAddress remoteAddr(reinterpret_cast<quint8*>(buf + 62));
     if (!prefixes_->contains(remoteAddr)) return;
     sockaddr_ll ll{};
@@ -296,7 +296,7 @@ class Tunnel {
       sum += *reinterpret_cast<uint16_t*>(buf + 22 + i);
     }
     while (sum >> 16) sum = (sum >> 16) + (sum & 0xffff);
-    *reinterpret_cast<uint16_t*>(buf + 56) = static_cast<uint16_t>(~sum);
+    *reinterpret_cast<uint16_t*>(buf + 56) = ~static_cast<uint16_t>(sum);
     ::freeaddrinfo(result);
     ::sendto(sock_, buf, len, /* flags = */ 0, reinterpret_cast<sockaddr*>(ll),
              sizeof *ll);
