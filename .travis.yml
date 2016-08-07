@@ -1,0 +1,102 @@
+language: cpp
+sudo: required
+dist: trusty
+services:
+  - docker
+
+install:
+  - sudo add-apt-repository -y ppa:george-edison55/cmake-3.x
+  - sudo apt-get update
+  - sudo apt-get install -y cmake qt5-default moreutils  # moreutils for "ts" and "mispipe"
+    # Smaller Alpine won't work here, because we reuse binary compiled on
+    # Travis-Ubuntu-Trusty.
+    # Other VMs will just reuse the same image.
+  - docker pull ubuntu:14.04
+
+script:
+  - mkdir build
+  - cd build
+  - cmake ..
+  - make
+
+  - docker run -dti --name=router --device=/dev/net/tun --cap-add=NET_ADMIN -v $TRAVIS_BUILD_DIR:/dir:ro ubuntu:14.04 bash
+  - docker run -dti --name=isp --net=none ubuntu:14.04 bash  # ISP without network :-)
+  - docker run -dti --name=host1 --net=none ubuntu:14.04 bash
+  - docker run -dti --name=host2 --net=none ubuntu:14.04 bash
+  - docker ps -a
+
+  - docker exec router apt-get update
+  - docker exec router apt-get install -y software-properties-common  # add-apt-repository
+  - docker exec router add-apt-repository -y ppa:jonathonf/zerotier  # ndppd
+  - docker exec router apt-get update
+  - docker exec router apt-get install -y libqt5network5 radvd ndppd tcpdump
+
+    # Connect the hosts with networks
+    # Not using "docker network" to reduce confusion of which interface has which name, as multiple will be connected to router
+  - sudo ip link add lan1r type veth peer name lan1h
+  - sudo ip link add lan2r type veth peer name lan2h
+  - sudo ip link add wanr type veth peer name wani
+  - ifconfig -a
+    # Teach "ip" command the names of our network netspaces
+  - sudo mkdir -p /run/netns
+  - sudo ln -s /proc/$(docker inspect -f '{{.State.Pid}}' router)/ns/net /run/netns/router
+  - sudo ln -s /proc/$(docker inspect -f '{{.State.Pid}}' isp)/ns/net /run/netns/isp
+  - sudo ln -s /proc/$(docker inspect -f '{{.State.Pid}}' host1)/ns/net /run/netns/host1
+  - sudo ln -s /proc/$(docker inspect -f '{{.State.Pid}}' host2)/ns/net /run/netns/host2
+  - sudo ip link set lan1r netns router
+  - sudo ip link set lan1h netns host1
+  - sudo ip link set lan2r netns router
+  - sudo ip link set lan2h netns host2
+  - sudo ip link set wanr netns router
+  - sudo ip link set wani netns isp
+    # fd61:67f4:e87e:b396::/64 is network which isp gave us, which we'll share using ndprbrd+ndppd
+    # fd7d:4bec:f525:dd8e::1 is some external host; for simplicity it will also belong to isp
+  - sudo ip netns exec isp ip addr add fd61:67f4:e87e:b396::1/64 dev wani
+  - sudo ip netns exec isp ip addr add fd7d:4bec:f525:dd8e::1 dev wani
+  - sudo ip netns exec router ip addr add fd61:67f4:e87e:b396::2/128 dev wanr
+  - sudo ip netns exec isp ip link set wani up
+  - sudo ip netns exec router ip link set wanr up
+  - sudo ip netns exec router ip link set lan1r up
+  - sudo ip netns exec router ip link set lan2r up
+  - sudo ip netns exec host1 ip link set lan1h up
+  - sudo ip netns exec host2 ip link set lan2h up
+  - docker exec isp ifconfig
+  - docker exec router ifconfig
+  - docker exec host1 ifconfig
+  - docker exec host2 ifconfig
+    # Router has enabled forwarding, and can't accept RA from ISP, setup a static route as-if it got configured via RA
+  - sudo ip netns exec router sysctl net.ipv6.conf.all.forwarding=1
+  - docker exec isp ip addr show dev wani | perl -n -E 'm|inet6 (fe80:[^/]+)| and say $1'
+  - sudo ip netns exec router ip route add default via $(docker exec isp ip a show dev wani | perl -n -E 'm|inet6 (fe80:[^/]+)| and say $1') dev wanr
+  - docker exec router ip -6 route
+
+  - docker exec -d router sh -c 'tcpdump -vv -i wanr > /var/log/wanr.log'
+  - docker exec -d router sh -c 'tcpdump -vv -i lan1r > /var/log/lan1r.log'
+  - docker exec -d router sh -c 'tcpdump -vv -i lan2r > /var/log/lan2r.log'
+
+    # Setup daemons
+  - docker exec -d router /dir/build/ndprbrd --interface=lan1r --interface=lan2r --prefix=fd61:67f4:e87e:b396::/64
+  - docker exec router cp /dir/testdata/ndppd.conf /etc/
+  - docker exec router cp /dir/testdata/radvd.conf /etc/
+  - docker exec router ndppd -d
+  - docker exec router radvd
+
+  - sleep 5
+  - docker exec router ifconfig
+  - docker exec router ip -6 route
+
+  - docker exec -d router sh -c 'tcpdump -vv -i ndprbrd0 > /var/log/ndprbrd0.log'
+
+    # Test!
+  - mispipe "docker exec host1 ping6 -c90 -O fd7d:4bec:f525:dd8e::1" ts
+
+    # Test another direction; note that the source is outside of subnet
+  - docker exec host2 ip addr show dev lan2h | perl -n -E 'm|inet6 (fd61:[^/]+)| and say $1'
+  - mispipe "docker exec isp ping6 -c60 -I fd7d:4bec:f525:dd8e::1 -O $(docker exec host2 ip addr show dev lan2h | perl -n -E 'm|inet6 (fd61:[^/]+)| and say $1')" ts
+
+  - docker exec router pkill tcpdump
+  - docker exec router ip -6 route
+  - docker exec router cat /var/log/wanr.log
+  - docker exec router cat /var/log/lan1r.log
+  - docker exec router cat /var/log/lan2r.log
+  - docker exec router cat /var/log/ndprbrd0.log

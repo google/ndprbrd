@@ -166,32 +166,25 @@ interface, use `--pendulum`.
 Sample config of ndppd:
 
 ```
-route-ttl 30000
 proxy eth0 {
-  router yes
-  timeout 500
-  ttl 30000
   rule 2001:db8:1:2::/64 {
     auto
   }
 }
 proxy eth1 {
-  router yes
-  timeout 500
-  ttl 30000
   rule 2001:db8:1:2::/64 {
     auto
   }
 }
 proxy eth2 {
-  router yes
-  timeout 500
-  ttl 30000
   rule 2001:db8:1:2::/64 {
     auto
   }
 }
 ```
+
+Also note that routers don't usually accept RA themselves, so you might need to
+specify the default route yourself (or try to set `accept_ra` to 2).
 
 ## Requirements
 
