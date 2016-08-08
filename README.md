@@ -193,3 +193,12 @@ specify the default route yourself (or try to set `accept_ra` to 2).
 *   Linux
 *   Qt Network
 *   Compiler with C++11 support
+
+## Alternatives
+
+*   Switch ISP to one that gives more than /64 :-)
+*   Give different parts of /64 to LAN-1 and LAN-2, but that breaks SLAAC, so
+    *    Configure a static address for every host,
+    *    Or use DHCPv6
+*   Bridge all networks together, which means that IPv4 will also be in a
+    single subnet
