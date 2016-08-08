@@ -188,7 +188,7 @@ proxy eth2 {
 Also note that routers don't usually accept RA themselves, so you might need to
 specify the default route yourself (or try to set `accept_ra` to 2).
 
-## Requirements
+## Dependencies
 
 *   Linux
 *   Qt Network
