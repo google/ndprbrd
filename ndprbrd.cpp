@@ -13,7 +13,6 @@
 // limitations under the License.
 
 #include <QCoreApplication>
-#include <QCommandLineParser>
 #include <QTextStream>
 #include <QHostAddress>
 #include <QProcess>
@@ -23,6 +22,7 @@
 #include <QSocketNotifier>
 #include <QDateTime>
 
+#include <iostream>
 #include <chrono>
 #include <vector>
 #include <list>
@@ -43,17 +43,20 @@
 #include <linux/if_packet.h>
 #include <net/ethernet.h>
 
+#include "third_party/cxxopts/include/cxxopts.hpp"
+
 class PrefixList {
  public:
-  explicit PrefixList(const QStringList& list) {
+  explicit PrefixList(const std::vector<std::string>& list) {
     if (list.empty()) {
-      QTextStream(stderr) << "Error: --prefix is required." << endl;
+      std::cerr << "Error: --prefix is required." << std::endl;
       std::exit(1);
     }
-    for (const QString& prefix : list) {
-      prefixes_.push_back(QHostAddress::parseSubnet(prefix));
+    for (const std::string& prefix : list) {
+      prefixes_.push_back(
+          QHostAddress::parseSubnet(QString::fromStdString(prefix)));
       if (prefixes_.back().second != 64) {
-        QTextStream(stderr) << "Error: prefix should be /64" << endl;
+        std::cerr << "Error: prefix should be /64" << std::endl;
         std::exit(1);
       }
     }
@@ -94,10 +97,10 @@ class RouteTable {
       }
     }
   }
-  void replaceSystem(const QString& addr, QNetworkInterface& iface) {
+  void replaceSystem(const std::string& addr, QNetworkInterface& iface) {
     QProcess pr;
-    pr.start("ip", {"-6", "route", "replace", addr, "dev", iface.name(),
-                    "protocol", proto_});
+    pr.start("ip", {"-6", "route", "replace", QString::fromStdString(addr),
+                    "dev", iface.name(), "protocol", proto_});
     pr.waitForFinished(-1);
   }
 
@@ -153,7 +156,7 @@ class SocketWatcher {
     QHostAddress remoteAddr(reinterpret_cast<quint8*>(buf + 8));
     if (!prefixes_->contains(remoteAddr)) return;
     routes_->learn(remoteAddr, iface_);
-    routes_->replaceSystem(remoteAddr.toString(), iface_);
+    routes_->replaceSystem(remoteAddr.toString().toStdString(), iface_);
   }
   QNetworkInterface iface_;
   std::unique_ptr<QSocketNotifier> notifier_;
@@ -163,7 +166,7 @@ class SocketWatcher {
 
 class Tunnel {
  public:
-  Tunnel(const QString& name, std::vector<QNetworkInterface> interfaces,
+  Tunnel(const std::string& name, std::vector<QNetworkInterface> interfaces,
          const PrefixList* prefixes)
       : interfaces_(std::move(interfaces)), prefixes_(prefixes) {
     int tap = ::open("/dev/net/tun", O_RDWR);
@@ -173,7 +176,7 @@ class Tunnel {
     }
     struct ifreq ifr {};
     ifr.ifr_flags = IFF_TAP | IFF_NO_PI;
-    std::strncpy(ifr.ifr_name, name.toUtf8().constData(), IFNAMSIZ);
+    std::strncpy(ifr.ifr_name, name.c_str(), IFNAMSIZ);
     if (::ioctl(tap, TUNSETIFF, &ifr) == -1) {
       int e = errno;
       QTextStream(stderr) << "Error: can't configure TAP interface: "
@@ -299,71 +302,61 @@ class Tunnel {
 
 int main(int argc, char** argv) {
   QCoreApplication app(argc, argv);
-  QCommandLineParser parser;
-  parser.setApplicationDescription(
-      "NDP Routing Bridge Daemon\n\nExample: " + app.applicationName() +
-      " --interface=eth1 --interface=eth2 --prefix=2001:db8:1:2::/64");
-  parser.addHelpOption();
-
-  QCommandLineOption interfaceOpt(
-      "interface",
-      "LAN interfaces where hosts are discovered (multiple allowed)", "iface");
-  parser.addOption(interfaceOpt);
-
-  QCommandLineOption prefixOpt(
-      "prefix",
-      "Subnets /64 which should be routed by ndprbrd (multiple allowed)",
-      "prefix");
-  parser.addOption(prefixOpt);
-
-  QCommandLineOption expireOpt(
-      "expire",
-      "How long should discovered routes stay when not used, default: 600",
-      "secs", "600");
-  parser.addOption(expireOpt);
-
-  QCommandLineOption protoOpt(
-      "protocol",
-      "Protocol num for routing table, as known by kernel, default: 100", "num",
-      "100");
-  parser.addOption(protoOpt);
-
-  QCommandLineOption pendulumOpt("pendulum",
-                                 "(not recommended) Rapidly switch default "
-                                 "route between LAN interfaces instead of "
-                                 "creating TAP interface");
-  parser.addOption(pendulumOpt);
-
-  QCommandLineOption tunOpt(
-      "tun", "Name of TAP interface to create, default: ndprbrdN", "iface",
-      "ndprbrd%d");
-  parser.addOption(tunOpt);
-
-  parser.process(app);
-  if (!parser.isSet(interfaceOpt)) {
-    QTextStream(stderr) << "Error: --interface is required." << endl;
-    return 1;
+  cxxopts::Options options(argv[0], "NDP Routing Bridge Daemon");
+  std::vector<std::string> interfacesStr;
+  std::vector<std::string> prefixesStr;
+  int expire{};
+  int proto{};
+  bool pendulumOpt{};
+  std::string tun;
+  options.add_options()
+      // clang-format off
+      ("help", "Print this help")
+      ("interface", "LAN interfaces where hosts are discovered (multiple allowed)", cxxopts::value(interfacesStr), "IFACE")
+      ("prefix", "Subnets /64 which should be routed by ndprbrd (multiple allowed)", cxxopts::value(prefixesStr), "PREFIX")
+      ("expire", "How long should discovered routes stay when not used, in seconds", cxxopts::value(expire)->default_value("600"), "N")
+      ("protocol", "Protocol num for routing table, as known by kernel", cxxopts::value(proto)->default_value("100"), "N")
+      ("pendulum", "(not recommended) Rapidly switch default route between LAN interfaces instead of creating TAP interface", cxxopts::value(pendulumOpt))
+      ("tun", "Name of TAP interface to create", cxxopts::value(tun)->default_value("ndprbrd%d"), "IFACE");
+  // clang-format on
+  auto printHelp = [&]() {
+    std::cout << options.help({""}) << "\nExample:\n  " << argv[0]
+              << " --interface=eth1 --interface=eth2 --prefix=2001:db8:1:2::/64"
+              << std::endl;
+  };
+  try {
+    options.parse(argc, argv);
+  } catch (const cxxopts::OptionException& e) {
+    std::cerr << "Error: " << e.what() << std::endl;
+    printHelp();
+    std::exit(1);
   }
-
-  QStringList prefixesStr = parser.values(prefixOpt);
+  if (options.count("help")) {
+    printHelp();
+    std::exit(0);
+  }
+  if (interfacesStr.empty()) {
+    std::cerr << "Error: --interface is required." << std::endl;
+    printHelp();
+    std::exit(1);
+  }
   PrefixList prefixes(prefixesStr);
 
-  RouteTable routes(parser.value(protoOpt),
-                    std::chrono::seconds(parser.value(expireOpt).toInt()));
+  RouteTable routes(QString::number(proto), std::chrono::seconds(expire));
   std::list<SocketWatcher> watchers;
   std::vector<QNetworkInterface> interfaces;
 
-  for (const QString& iface : parser.values(interfaceOpt)) {
-    QNetworkInterface interface = QNetworkInterface::interfaceFromName(iface);
+  for (const std::string& iface : interfacesStr) {
+    QNetworkInterface interface =
+        QNetworkInterface::interfaceFromName(QString::fromStdString(iface));
     if (!interface.isValid()) {
-      QTextStream(stderr) << "Error: interface " << iface << " is not valid"
-                          << endl;
+      std::cerr << "Error: interface " << iface << " is not valid" << endl;
       return 1;
     }
     // Fill the table with existing routes
     QProcess pr;
     pr.start("ip", {"-6", "route", "show", "dev", interface.name(), "protocol",
-                    parser.value(protoOpt)});
+                    QString::number(proto)});
     pr.waitForFinished(-1);
     for (const QString& line : QString::fromUtf8(pr.readAllStandardOutput())
                                    .split('\n', QString::SkipEmptyParts)) {
@@ -385,21 +378,20 @@ int main(int argc, char** argv) {
   QTimer pendulum;
   std::unique_ptr<Tunnel> tunnel;
 
-  if (parser.isSet(pendulumOpt)) {
+  if (pendulumOpt) {
     QObject::connect(&pendulum, &QTimer::timeout, [&]() {
       int& current = pendulumCurrent;
-      for (const QString& prefix : prefixesStr) {
+      for (const std::string& prefix : prefixesStr) {
         routes.replaceSystem(prefix, interfaces[current]);
       }
       current = (current + 1) % interfaces.size();
     });
     pendulum.start(1000 /* ms */);
   } else {
-    tunnel.reset(
-        new Tunnel(parser.value(tunOpt), std::move(interfaces), &prefixes));
+    tunnel.reset(new Tunnel(tun, std::move(interfaces), &prefixes));
     QNetworkInterface tun =
         QNetworkInterface::interfaceFromName(tunnel->name());
-    for (const QString& prefix : prefixesStr) {
+    for (const std::string& prefix : prefixesStr) {
       routes.replaceSystem(prefix, tun);
     }
   }
