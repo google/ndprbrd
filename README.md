@@ -192,7 +192,7 @@ specify the default route yourself (or try to set `accept_ra` to 2).
 
 *   Linux
 *   Qt Network
-*   Compiler with C++11 support
+*   Compiler with C++11 support (GCC 4.9+)
 
 ## Alternatives
 
