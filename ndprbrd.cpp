@@ -355,8 +355,8 @@ int main(int argc, char** argv) {
     }
     // Fill the table with existing routes
     subprocess::popen pr("ip", {"-6", "route", "show", "dev",
-                                interface.name().toStdString()/*, "protocol",
-                                std::to_string(proto)*/});
+                                interface.name().toStdString(), "protocol",
+                                std::to_string(proto)});
     pr.wait();
     std::string line;
     while (std::getline(pr.stdout(), line)) {
