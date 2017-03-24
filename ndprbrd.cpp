@@ -13,15 +13,14 @@
 // limitations under the License.
 
 #include <QCoreApplication>
-#include <QTextStream>
 #include <QHostAddress>
-#include <QProcess>
 #include <QTimer>
 #include <QHash>
 #include <QNetworkInterface>
 #include <QSocketNotifier>
 #include <QDateTime>
 
+#include <sstream>
 #include <iostream>
 #include <chrono>
 #include <vector>
@@ -44,6 +43,7 @@
 #include <net/ethernet.h>
 
 #include "third_party/cxxopts/include/cxxopts.hpp"
+#include "third_party/cpp-subprocess/include/subprocess.hpp"
 
 class PrefixList {
  public:
@@ -74,7 +74,7 @@ class PrefixList {
 
 class RouteTable {
  public:
-  explicit RouteTable(const QString& proto, std::chrono::duration<int> ttl)
+  explicit RouteTable(const std::string& proto, std::chrono::duration<int> ttl)
       : proto_(proto), ttl_(ttl) {}
   void learn(const QHostAddress& addr, const QNetworkInterface& iface) {
     routes_.insert(
@@ -87,10 +87,11 @@ class RouteTable {
       if (it.value().second < now) {
         qDebug() << "deleting" << it.key().toString() << "from"
                  << it.value().first.name();
-        QProcess pr;
-        pr.start("ip", {"-6", "route", "del", it.key().toString(), "dev",
-                        it.value().first.name(), "protocol", proto_});
-        pr.waitForFinished(-1);
+        subprocess::popen pr("ip", {"-6", "route", "del",
+                                    it.key().toString().toStdString(), "dev",
+                                    it.value().first.name().toStdString(),
+                                    "protocol", proto_});
+        pr.wait();
         it = routes_.erase(it);
       } else {
         ++it;
@@ -98,10 +99,10 @@ class RouteTable {
     }
   }
   void replaceSystem(const std::string& addr, QNetworkInterface& iface) {
-    QProcess pr;
-    pr.start("ip", {"-6", "route", "replace", QString::fromStdString(addr),
-                    "dev", iface.name(), "protocol", proto_});
-    pr.waitForFinished(-1);
+    subprocess::popen pr("ip",
+                         {"-6", "route", "replace", addr, "dev",
+                          iface.name().toStdString(), "protocol", proto_});
+    pr.wait();
   }
 
  private:
@@ -109,7 +110,7 @@ class RouteTable {
         std::pair<QNetworkInterface,
                   std::chrono::steady_clock::time_point /* expiration time */>>
       routes_;
-  QString proto_;
+  std::string proto_;
   std::chrono::duration<int> ttl_;
 };
 
@@ -121,22 +122,22 @@ class SocketWatcher {
     int sock = ::socket(AF_INET6, SOCK_RAW, IPPROTO_ICMPV6);
     if (sock == -1) {
       int e = errno;
-      QTextStream(stderr) << "Error: can't create ICMPv6 socket: "
-                          << std::strerror(e) << endl;
+      std::cerr << "Error: can't create ICMPv6 socket: " << std::strerror(e)
+                << std::endl;
       std::exit(1);
     }
     QByteArray ifaceName = iface.name().toUtf8();
     if (::setsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE, ifaceName.constData(),
                      ifaceName.size()) == -1) {
       int e = errno;
-      QTextStream(stderr) << "Error: can't bind socket to " << iface.name()
-                          << ": " << std::strerror(e) << endl;
+      std::cerr << "Error: can't bind socket to " << iface.name().toStdString()
+                << ": " << std::strerror(e) << std::endl;
       std::exit(1);
     }
     if (::fcntl(sock, F_SETFL, ::fcntl(sock, F_GETFL) | O_NONBLOCK) == -1) {
       int e = errno;
-      QTextStream(stderr) << "Error: can't make socket non-blocking: "
-                          << std::strerror(e) << endl;
+      std::cerr << "Error: can't make socket non-blocking: " << std::strerror(e)
+                << std::endl;
       std::exit(1);
     }
     notifier_.reset(new QSocketNotifier(sock, QSocketNotifier::Read));
@@ -171,7 +172,7 @@ class Tunnel {
       : interfaces_(std::move(interfaces)), prefixes_(prefixes) {
     int tap = ::open("/dev/net/tun", O_RDWR);
     if (tap == -1) {
-      QTextStream(stderr) << "Error: can't create TAP interface" << endl;
+      std::cerr << "Error: can't create TAP interface" << std::endl;
       std::exit(1);
     }
     struct ifreq ifr {};
@@ -179,36 +180,36 @@ class Tunnel {
     std::strncpy(ifr.ifr_name, name.c_str(), IFNAMSIZ);
     if (::ioctl(tap, TUNSETIFF, &ifr) == -1) {
       int e = errno;
-      QTextStream(stderr) << "Error: can't configure TAP interface: "
-                          << std::strerror(e) << endl;
+      std::cerr << "Error: can't configure TAP interface: " << std::strerror(e)
+                << std::endl;
       std::exit(1);
     }
     name_ = QString(ifr.ifr_name);
     if (::fcntl(tap, F_SETFL, ::fcntl(tap, F_GETFL) | O_NONBLOCK) == -1) {
       int e = errno;
-      QTextStream(stderr) << "Error: can't make TAP interface non-blocking: "
-                          << std::strerror(e) << endl;
+      std::cerr << "Error: can't make TAP interface non-blocking: "
+                << std::strerror(e) << std::endl;
       std::exit(1);
     }
     sock_ = ::socket(AF_PACKET, SOCK_RAW, ETH_P_IPV6);
     if (sock_ == -1) {
       int e = errno;
-      QTextStream(stderr) << "Error: can't create raw socket: "
-                          << std::strerror(e) << endl;
+      std::cerr << "Error: can't create raw socket: " << std::strerror(e)
+                << std::endl;
       std::exit(1);
     }
     // SIOCGIFFLAGS wants a socket. It doesn't matter which exact one.
     if (::ioctl(sock_, SIOCGIFFLAGS, &ifr) == -1) {
       int e = errno;
-      QTextStream(stderr) << "Error: can't get TAP flags: " << std::strerror(e)
-                          << endl;
+      std::cerr << "Error: can't get TAP flags: " << std::strerror(e)
+                << std::endl;
       std::exit(1);
     }
     ifr.ifr_flags |= IFF_UP;
     if (::ioctl(sock_, SIOCSIFFLAGS, &ifr) == -1) {
       int e = errno;
-      QTextStream(stderr) << "Error: can't bring TAP interface up: "
-                          << std::strerror(e) << endl;
+      std::cerr << "Error: can't bring TAP interface up: " << std::strerror(e)
+                << std::endl;
       std::exit(1);
     }
     tapReader_.reset(new QSocketNotifier(tap, QSocketNotifier::Read));
@@ -342,7 +343,7 @@ int main(int argc, char** argv) {
   }
   PrefixList prefixes(prefixesStr);
 
-  RouteTable routes(QString::number(proto), std::chrono::seconds(expire));
+  RouteTable routes(std::to_string(proto), std::chrono::seconds(expire));
   std::list<SocketWatcher> watchers;
   std::vector<QNetworkInterface> interfaces;
 
@@ -350,17 +351,23 @@ int main(int argc, char** argv) {
     QNetworkInterface interface =
         QNetworkInterface::interfaceFromName(QString::fromStdString(iface));
     if (!interface.isValid()) {
-      std::cerr << "Error: interface " << iface << " is not valid" << endl;
+      std::cerr << "Error: interface " << iface << " is not valid" << std::endl;
       return 1;
     }
     // Fill the table with existing routes
-    QProcess pr;
-    pr.start("ip", {"-6", "route", "show", "dev", interface.name(), "protocol",
-                    QString::number(proto)});
-    pr.waitForFinished(-1);
-    for (const QString& line : QString::fromUtf8(pr.readAllStandardOutput())
-                                   .split('\n', QString::SkipEmptyParts)) {
-      QHostAddress addr(line.section(' ', 0, 0));
+    subprocess::popen pr("ip", {"-6", "route", "show", "dev",
+                                interface.name().toStdString()/*, "protocol",
+                                std::to_string(proto)*/});
+    pr.wait();
+    std::string line;
+    while (std::getline(pr.stdout(), line)) {
+      std::istringstream inbuf(line);
+      std::string prefix;
+      std::getline(inbuf, prefix, ' ');
+      if (prefix.empty()) {
+        continue;
+      }
+      QHostAddress addr(QString::fromStdString(prefix));
       if (prefixes.contains(addr)) {
         routes.learn(addr, interface);
       }

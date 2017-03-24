@@ -1,3 +1,6 @@
 [submodule "third_party/cxxopts"]
 	path = third_party/cxxopts
 	url = https://github.com/jarro2783/cxxopts/
+[submodule "third_party/cpp-subprocess"]
+	path = third_party/cpp-subprocess
+	url = https://github.com/tsaarni/cpp-subprocess
