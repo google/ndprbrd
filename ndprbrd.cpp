@@ -18,7 +18,6 @@
 #include <QHash>
 #include <QNetworkInterface>
 #include <QSocketNotifier>
-#include <QDateTime>
 
 #include <sstream>
 #include <iostream>
