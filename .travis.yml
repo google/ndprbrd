@@ -98,7 +98,7 @@ script:
   - docker exec -d router sh -c 'tcpdump -vv -i lan2r > /var/log/lan2r.log'
 
     # Setup daemons
-  - docker exec -d router /dir/build/ndprbrd --interface=lan1r --interface=lan2r --prefix=fd61:67f4:e87e:b396::/64
+  - docker exec -d router sh -c '/dir/build/ndprbrd --interface=lan1r --interface=lan2r --prefix=fd61:67f4:e87e:b396::/64 > /var/log/ndprbrd.log 2>&1'
   - docker exec router cp /dir/testdata/ndppd.conf /etc/
   - docker exec router cp /dir/testdata/radvd.conf /etc/
   - docker exec router ndppd -d
@@ -124,3 +124,4 @@ script:
   - docker exec router cat /var/log/lan1r.log
   - docker exec router cat /var/log/lan2r.log
   - docker exec router cat /var/log/ndprbrd0.log
+  - docker exec router cat /var/log/ndprbrd.log
