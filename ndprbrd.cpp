@@ -14,7 +14,6 @@
 
 #include <QCoreApplication>
 #include <QTimer>
-#include <QNetworkInterface>
 #include <QSocketNotifier>
 
 #include <array>
@@ -128,8 +127,8 @@ class RouteTable {
     auto now = std::chrono::steady_clock::now();
     for (auto it = routes_.begin(); it != routes_.end();) {
       if (it->second.second < now) {
-        qDebug() << "deleting" << QString::fromStdString(it->first) << "from"
-                 << QString::fromStdString(it->second.first);
+        std::cout << "deleting " << it->first << " from " << it->second.first
+                  << std::endl;
         subprocess::popen pr("ip", {"-6", "route", "del", it->first, "dev",
                                     it->second.first, "protocol", proto_});
         pr.wait();
@@ -242,7 +241,7 @@ class LinkLocal {
 
 class Tunnel {
  public:
-  Tunnel(const std::string& name, std::vector<QNetworkInterface> interfaces,
+  Tunnel(const std::string& name, std::vector<std::string> interfaces,
          const PrefixList* prefixes)
       : interfaces_(std::move(interfaces)), prefixes_(prefixes) {
     int tap = ::open("/dev/net/tun", O_RDWR);
@@ -311,16 +310,17 @@ class Tunnel {
     ll.sll_protocol = ETH_P_IPV6;
     ll.sll_halen = 6;
     std::memcpy(ll.sll_addr, buf, ETH_ALEN);
-    for (const QNetworkInterface& iface : interfaces_) {
+    for (const std::string& iface : interfaces_) {
       sendTo(iface, &ll, buf, len);
     }
   }
 
-  void sendTo(const QNetworkInterface& iface, sockaddr_ll* ll, char* buf,
+  void sendTo(const std::string& iface, sockaddr_ll* ll, char* buf,
               ssize_t len) {
-    ll->sll_ifindex = iface.index();
     ifreq ifr{};
-    std::strncpy(ifr.ifr_name, iface.name().toUtf8().constData(), IFNAMSIZ);
+    std::strncpy(ifr.ifr_name, iface.c_str(), IFNAMSIZ);
+    if (::ioctl(sock_, SIOCGIFINDEX, &ifr) == -1) return;
+    ll->sll_ifindex = ifr.ifr_ifindex;
     if (::ioctl(sock_, SIOCGIFHWADDR, &ifr) == -1) return;
     // Source in Ethernet header
     std::memcpy(buf + 6, ifr.ifr_hwaddr.sa_data, 6);
@@ -329,7 +329,7 @@ class Tunnel {
       std::memcpy(buf + 80, ifr.ifr_hwaddr.sa_data, 6);
     }
 
-    const unsigned char* new_addr = linkLocal_.get(iface.name().toStdString());
+    const unsigned char* new_addr = linkLocal_.get(iface);
     if (!new_addr) return;
     std::memcpy(buf + 22, new_addr, 16);
     uint32_t sum = htons(0x3A);
@@ -346,7 +346,7 @@ class Tunnel {
 
   int sock_;
   std::unique_ptr<QSocketNotifier> tapReader_;
-  const std::vector<QNetworkInterface> interfaces_;
+  const std::vector<std::string> interfaces_;
   const PrefixList* prefixes_;
   std::string name_;
   LinkLocal linkLocal_;
@@ -355,7 +355,7 @@ class Tunnel {
 int main(int argc, char** argv) {
   QCoreApplication app(argc, argv);
   cxxopts::Options options(argv[0], "NDP Routing Bridge Daemon");
-  std::vector<std::string> interfacesStr;
+  std::vector<std::string> interfaces;
   std::vector<std::string> prefixesStr;
   int expire{};
   int proto{};
@@ -364,7 +364,7 @@ int main(int argc, char** argv) {
   options.add_options()
       // clang-format off
       ("help", "Print this help")
-      ("interface", "LAN interfaces where hosts are discovered (multiple allowed)", cxxopts::value(interfacesStr), "IFACE")
+      ("interface", "LAN interfaces where hosts are discovered (multiple allowed)", cxxopts::value(interfaces), "IFACE")
       ("prefix", "Subnets /64 which should be routed by ndprbrd (multiple allowed)", cxxopts::value(prefixesStr), "PREFIX")
       ("expire", "How long should discovered routes stay when not used, in seconds", cxxopts::value(expire)->default_value("600"), "N")
       ("protocol", "Protocol num for routing table, as known by kernel", cxxopts::value(proto)->default_value("100"), "N")
@@ -387,7 +387,7 @@ int main(int argc, char** argv) {
     printHelp();
     std::exit(0);
   }
-  if (interfacesStr.empty()) {
+  if (interfaces.empty()) {
     std::cerr << "Error: --interface is required." << std::endl;
     printHelp();
     std::exit(1);
@@ -396,15 +396,8 @@ int main(int argc, char** argv) {
 
   RouteTable routes(std::to_string(proto), std::chrono::seconds(expire));
   std::list<SocketWatcher> watchers;
-  std::vector<QNetworkInterface> interfaces;
 
-  for (const std::string& iface : interfacesStr) {
-    QNetworkInterface interface =
-        QNetworkInterface::interfaceFromName(QString::fromStdString(iface));
-    if (!interface.isValid()) {
-      std::cerr << "Error: interface " << iface << " is not valid" << std::endl;
-      std::exit(1);
-    }
+  for (const std::string& iface : interfaces) {
     // Fill the table with existing routes
     subprocess::popen pr("ip", {"-6", "route", "show", "dev", iface, "protocol",
                                 std::to_string(proto)});
@@ -423,7 +416,6 @@ int main(int argc, char** argv) {
     }
     // Start watching the interface
     watchers.emplace_back(iface, &prefixes, &routes);
-    interfaces.push_back(interface);
   }
 
   QTimer expirator;
@@ -438,7 +430,7 @@ int main(int argc, char** argv) {
     QObject::connect(&pendulum, &QTimer::timeout, [&]() {
       int& current = pendulumCurrent;
       for (const std::string& prefix : prefixesStr) {
-        routes.replaceSystem(prefix, interfaces[current].name().toStdString());
+        routes.replaceSystem(prefix, interfaces[current]);
       }
       current = (current + 1) % interfaces.size();
     });
