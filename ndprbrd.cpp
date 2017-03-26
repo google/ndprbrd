@@ -206,11 +206,11 @@ class SocketWatcher {
 
 class LinkLocal {
  public:
-  const unsigned char* get(const std::string& iface) {
+  const in6_addr* get(const std::string& iface) {
     rebuild();
     auto it = cache_.find(iface);
     if (it == cache_.end()) return nullptr;
-    return it->second.s6_addr;
+    return &it->second;
   }
 
  private:
@@ -329,9 +329,9 @@ class Tunnel {
       std::memcpy(buf + 80, ifr.ifr_hwaddr.sa_data, 6);
     }
 
-    const unsigned char* new_addr = linkLocal_.get(iface);
+    const in6_addr* new_addr = linkLocal_.get(iface);
     if (!new_addr) return;
-    std::memcpy(buf + 22, new_addr, 16);
+    std::memcpy(buf + 22, new_addr->s6_addr, 16);
     uint32_t sum = htons(0x3A);
     *reinterpret_cast<uint16_t*>(buf + 56) = 0;
     sum += *reinterpret_cast<uint16_t*>(buf + 18); // length
