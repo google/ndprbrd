@@ -185,6 +185,8 @@ proxy eth2 {
 }
 ```
 
+Note that eth0 (interface connected to ISP) is in ndppd, but not in ndprbrd.
+
 Also note that routers don't usually accept RA themselves, so you might need to
 specify the default route yourself (or try to set `accept_ra` to 2).
 
