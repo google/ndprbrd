@@ -93,21 +93,21 @@ recommended mode), and not using it.
                  +-----+-----+
 +-------+   eth1 |           | eth2   +-------+
 | LAN-1 +--------+ My router +--------+ LAN-2 |
-+-------+     ^  |           |  ^     +-------+
-              |  +-----+-----+  |
-              |        | tap0   |
++-------+     ^  |           |     ^  +-------+
+              |  +-----+-----+     |
+              |        | ndprbrd0  |
               |        | route to 2001:db8:1:2::/64
               |        | accepts NDP solicitations only, and sends them to both LANs
-              |        |        |
-              +--------+--------+
+              |        |           |
+              +--------+-----------+
 ```
 
-When Router tries to send a packet, it sends neighbor solicitation to tap0, and
-ndprbrd resends it to all interfaces which it's configured to use. Let's say
-LAN-1 replies with neighbor advertisement. Then ndprbrd sees it, and adds a
+When Router tries to send a packet, it sends neighbor solicitation to ndprbrd0,
+and ndprbrd resends it to all interfaces which it's configured to use. Let's
+say LAN-1 replies with neighbor advertisement. Then ndprbrd sees it, and adds a
 static route to the advertised address 2001:db8:1:2::33 to interface eth1. From
 this point all packets to that address will go directly to eth1, and not to
-eth2, and not even to tap0.
+eth2, and not even to ndprbrd0.
 
 If at some point later advertisements about 2001:db8:1:2::33 stopped coming from
 eth1, the static route is removed after a timeout (10 minutes by default). Then,
@@ -125,21 +125,21 @@ route to 2001:db8:1:2:33/128       |
 route to 2001:db8:1:2:77/128 +-----+-----+ route to 2001:db8:1:2::55/128
         +-------+       eth1 |           | eth2       +-------+
         | LAN-1 +------------+ My router +------------+ LAN-2 |
-        +-------+         ^  |           |  ^         +-------+
-                          |  +-----+-----+  |
-                          |        | tap0   |
+        +-------+         ^  |           |      ^     +-------+
+                          |  +-----+-----+      |
+                          |        | ndprbrd0   |
                           |        | route to 2001:db8:1:2::/64
                           |        | accepts NDP solicitations only, and sends them to both LANs
-                          |        |        |
-                          +--------+--------+
+                          |        |            |
+                          +--------+------------+
 ```
 
 There is one more missing step: what happens when a machine in LAN-1 tries to
 send something to LAN-2? The answer is ndppd again: instead of listening only on
 eth0 ndppd should listen also on eth1 and eth2.
 
-Note about firewall setup: forwarding from eth0 to tap0 should be accepted.
-Otherwise, kernel won't generate NDP solicitations to tap0. (TODO: this
+Note about firewall setup: forwarding from eth0 to ndprbrd0 should be accepted.
+Otherwise, kernel won't generate NDP solicitations to ndprbrd0. (TODO: this
 statement is true for `static` configuration of ndppd on eth0. Probably `auto`
 doesn't require this, but I didn't check)
 
