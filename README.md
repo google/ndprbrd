@@ -6,9 +6,9 @@ Disclaimer: This is not an official Google product.
 
 This daemon has a very specific purpose: to give the same IPv6 prefix /64 to
 several network interfaces using radvd without creating L2 bridge and without
-need to configure DHCPv6. It's designed to be used together with [ndppd]
-(https://github.com/DanielAdolfsson/ndppd) for case if ISP gives single /64
-without delegating a bigger prefix to your router.
+need to configure DHCPv6. It's designed to be used together with
+[ndppd](https://github.com/DanielAdolfsson/ndppd) for case if ISP gives
+single /64 without delegating a bigger prefix to your router.
 
 Below are 2 sample setups - the simple one which doesn't need ndprbrd, and the
 more complicated one which makes use of it. The simple setup sets the base for
