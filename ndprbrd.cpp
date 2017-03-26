@@ -12,16 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <QCoreApplication>
-#include <QTimer>
-#include <QSocketNotifier>
-
 #include <array>
+#include <functional>
 #include <sstream>
 #include <iostream>
 #include <chrono>
 #include <vector>
 #include <unordered_map>
+#include <queue>
 #include <list>
 #include <memory>
 #include <cstdlib>
@@ -41,9 +39,89 @@
 #include <linux/if_packet.h>
 #include <net/ethernet.h>
 #include <ifaddrs.h>
+#include <sys/epoll.h>
 
 #include "third_party/cxxopts/include/cxxopts.hpp"
 #include "third_party/cpp-subprocess/include/subprocess.hpp"
+
+class EventLoop {
+ public:
+  EventLoop() : ep_(::epoll_create(20)) {
+    if (ep_ == -1) {
+      std::cerr << "Error creating epoll: " << std::strerror(errno)
+                << std::endl;
+      std::exit(1);
+    }
+  }
+
+  void addReadFd(int fd, std::function<void(int fd)> callback) {
+    epoll_event ev{};
+    ev.events = EPOLLIN;
+    ev.data.fd = fd;
+    if (::epoll_ctl(ep_, EPOLL_CTL_ADD, fd, &ev)) {
+      std::cerr << "Error adding socket to epoll: " << std::strerror(errno)
+                << std::endl;
+      std::exit(1);
+    }
+    sockets_[fd] = std::move(callback);
+  }
+
+  void addTimer(std::chrono::milliseconds period,
+                std::function<void()> callback) {
+    // The time will skew over time, but preciseness doesn't matter here
+    addSingleShot(std::chrono::steady_clock::now() + period, [=]() {
+      callback();
+      addTimer(period, std::move(callback));
+    });
+  }
+
+  void run() {
+    constexpr int kLen = 10;
+    epoll_event ev[kLen]{};
+    while (true) {
+      std::chrono::milliseconds millis = std::chrono::seconds(30);
+      if (!timers_.empty()) {
+        millis = std::chrono::duration_cast<std::chrono::milliseconds>(
+            timers_.top().when - std::chrono::steady_clock::now());
+      }
+      if (millis.count() >= 0) {
+        int n = ::epoll_wait(ep_, ev, kLen, millis.count());
+        if (n == -1) continue;
+        for (int i = 0; i < n; ++i) {
+          sockets_[ev[i].data.fd](ev[i].data.fd);
+        }
+      }
+      auto now = std::chrono::steady_clock::now();
+      // This scary condition ensures no busy loop of calling epoll_wait with
+      // zero timeout within single millisecond
+      while (!timers_.empty() &&
+             std::chrono::duration_cast<std::chrono::milliseconds>(
+                 timers_.top().when -
+                 now).count() <= 0) {
+        Shot shot = timers_.top();
+        timers_.pop();
+        shot.callback();
+      }
+    }
+  }
+
+ private:
+  void addSingleShot(std::chrono::steady_clock::time_point when,
+                     std::function<void()> callback) {
+    timers_.push(Shot{when, std::move(callback)});
+  }
+
+  struct Shot {
+    std::chrono::steady_clock::time_point when;
+    std::function<void()> callback;
+
+    bool operator<(const Shot& other) const { return when > other.when; }
+  };
+
+  const int ep_;
+  std::priority_queue<Shot> timers_;
+  std::unordered_map<int /* fd */, std::function<void(int fd)>> sockets_;
+};
 
 bool ParseTextAddress(const std::string& addr, char* output, int len) {
   assert(len <= 16);
@@ -116,7 +194,7 @@ class PrefixList {
 
 class RouteTable {
  public:
-  explicit RouteTable(const std::string& proto, std::chrono::duration<int> ttl)
+  explicit RouteTable(const std::string& proto, std::chrono::seconds ttl)
       : proto_(proto), ttl_(ttl) {}
   void learn(const std::string& addr, const std::string& iface) {
     routes_[addr] =
@@ -151,13 +229,13 @@ class RouteTable {
                 std::chrono::steady_clock::time_point /* expiration time */>>
       routes_;
   std::string proto_;
-  std::chrono::duration<int> ttl_;
+  std::chrono::seconds ttl_;
 };
 
 class SocketWatcher {
  public:
   SocketWatcher(const std::string& iface, const PrefixList* prefixes,
-                RouteTable* routes)
+                RouteTable* routes, EventLoop* loop)
       : iface_(iface), prefixes_(prefixes), routes_(routes) {
     int sock = ::socket(AF_INET6, SOCK_RAW, IPPROTO_ICMPV6);
     if (sock == -1) {
@@ -179,9 +257,7 @@ class SocketWatcher {
                 << std::endl;
       std::exit(1);
     }
-    notifier_.reset(new QSocketNotifier(sock, QSocketNotifier::Read));
-    QObject::connect(notifier_.get(), &QSocketNotifier::activated,
-                     [this](int sock) { readFrom(sock); });
+    loop->addReadFd(sock, [this](int sock) { readFrom(sock); });
   }
 
  private:
@@ -199,7 +275,6 @@ class SocketWatcher {
     routes_->replaceSystem(remoteAddr, iface_);
   }
   const std::string iface_;
-  std::unique_ptr<QSocketNotifier> notifier_;
   const PrefixList* prefixes_;
   RouteTable* routes_;
 };
@@ -242,7 +317,7 @@ class LinkLocal {
 class Tunnel {
  public:
   Tunnel(const std::string& name, std::vector<std::string> interfaces,
-         const PrefixList* prefixes)
+         const PrefixList* prefixes, EventLoop* loop)
       : interfaces_(std::move(interfaces)), prefixes_(prefixes) {
     int tap = ::open("/dev/net/tun", O_RDWR);
     if (tap == -1) {
@@ -286,9 +361,7 @@ class Tunnel {
                 << std::endl;
       std::exit(1);
     }
-    tapReader_.reset(new QSocketNotifier(tap, QSocketNotifier::Read));
-    QObject::connect(tapReader_.get(), &QSocketNotifier::activated,
-                     [this](int tap) { readFrom(tap); });
+    loop->addReadFd(tap, [this](int tap) { readFrom(tap); });
   }
 
   std::string name() const { return name_; }
@@ -345,7 +418,6 @@ class Tunnel {
   }
 
   int sock_;
-  std::unique_ptr<QSocketNotifier> tapReader_;
   const std::vector<std::string> interfaces_;
   const PrefixList* prefixes_;
   std::string name_;
@@ -353,7 +425,6 @@ class Tunnel {
 };
 
 int main(int argc, char** argv) {
-  QCoreApplication app(argc, argv);
   cxxopts::Options options(argv[0], "NDP Routing Bridge Daemon");
   std::vector<std::string> interfaces;
   std::vector<std::string> prefixesStr;
@@ -394,6 +465,7 @@ int main(int argc, char** argv) {
   }
   PrefixList prefixes(prefixesStr);
 
+  EventLoop loop;
   RouteTable routes(std::to_string(proto), std::chrono::seconds(expire));
   std::list<SocketWatcher> watchers;
 
@@ -415,32 +487,28 @@ int main(int argc, char** argv) {
       }
     }
     // Start watching the interface
-    watchers.emplace_back(iface, &prefixes, &routes);
+    watchers.emplace_back(iface, &prefixes, &routes, &loop);
   }
 
-  QTimer expirator;
-  QObject::connect(&expirator, &QTimer::timeout, [&]() { routes.cleanup(); });
-  expirator.start(5000 /* ms */);
-
+  loop.addTimer(std::chrono::seconds(5), [&]() { routes.cleanup(); });
   int pendulumCurrent = 0;
-  QTimer pendulum;
   std::unique_ptr<Tunnel> tunnel;
 
   if (pendulumOpt) {
-    QObject::connect(&pendulum, &QTimer::timeout, [&]() {
+    loop.addTimer(std::chrono::seconds(1), [&]() {
       int& current = pendulumCurrent;
       for (const std::string& prefix : prefixesStr) {
         routes.replaceSystem(prefix, interfaces[current]);
       }
       current = (current + 1) % interfaces.size();
     });
-    pendulum.start(1000 /* ms */);
   } else {
-    tunnel.reset(new Tunnel(tun, std::move(interfaces), &prefixes));
+    tunnel.reset(new Tunnel(tun, std::move(interfaces), &prefixes, &loop));
     for (const std::string& prefix : prefixesStr) {
       routes.replaceSystem(prefix, tunnel->name());
     }
   }
 
-  return app.exec();
+  loop.run();
+  return 0;
 }

@@ -191,7 +191,6 @@ specify the default route yourself (or try to set `accept_ra` to 2).
 ## Dependencies
 
 *   Linux
-*   Qt Network
 *   Compiler with C++11 support:
     *   GCC 4.9+
     *   Clang 3.5 with libstdc++ 4.9
