@@ -13,7 +13,6 @@
 // limitations under the License.
 
 #include <QCoreApplication>
-#include <QHostAddress>
 #include <QTimer>
 #include <QNetworkInterface>
 #include <QSocketNotifier>
@@ -42,11 +41,12 @@
 #include <linux/if_tun.h>
 #include <linux/if_packet.h>
 #include <net/ethernet.h>
+#include <ifaddrs.h>
 
 #include "third_party/cxxopts/include/cxxopts.hpp"
 #include "third_party/cpp-subprocess/include/subprocess.hpp"
 
-bool ParseTextAddress(const std::string &addr, char *output, int len) {
+bool ParseTextAddress(const std::string& addr, char* output, int len) {
   assert(len <= 16);
   addrinfo hints{};
   hints.ai_family = AF_INET6;
@@ -61,17 +61,17 @@ bool ParseTextAddress(const std::string &addr, char *output, int len) {
   }
   std::memcpy(
       output,
-      reinterpret_cast<sockaddr_in6 *>(result->ai_addr)->sin6_addr.s6_addr,
-      len);
+      reinterpret_cast<sockaddr_in6*>(result->ai_addr)->sin6_addr.s6_addr, len);
   ::freeaddrinfo(result);
   return true;
 }
 
-std::string ParseBinAddress(const char* addr, int len) {
+template<typename Char>
+std::string ParseBinAddress(const Char* addr, int len) {
   assert(len == 16);
   sockaddr_in6 ad{};
   ad.sin6_family = AF_INET6;
-  std::memmove(ad.sin6_addr.s6_addr, addr, len);
+  std::memcpy(ad.sin6_addr.s6_addr, addr, len);
   char buf[INET6_ADDRSTRLEN]{};
   ::getnameinfo(reinterpret_cast<sockaddr *>(&ad), sizeof ad, buf, sizeof buf,
                 nullptr, 0, NI_NUMERICHOST);
@@ -205,6 +205,41 @@ class SocketWatcher {
   RouteTable* routes_;
 };
 
+class LinkLocal {
+ public:
+  const unsigned char* get(const std::string& iface) {
+    rebuild();
+    auto it = cache_.find(iface);
+    if (it == cache_.end()) return nullptr;
+    return it->second.s6_addr;
+  }
+
+ private:
+  void rebuild() {
+    if (std::chrono::steady_clock::now() < expire_) return;
+    cache_.clear();
+    ifaddrs* ifa;
+    if (::getifaddrs(&ifa)) {
+      std::cerr << "getifaddrs: " << std::strerror(errno) << std::endl;
+      return;
+    }
+    for (ifaddrs* i = ifa; i; i = i->ifa_next) {
+      if (!i->ifa_addr) continue;
+      if (i->ifa_addr->sa_family != AF_INET6) continue;
+      in6_addr* ad = &reinterpret_cast<sockaddr_in6*>(i->ifa_addr)->sin6_addr;
+      // fe80::/10
+      if (ad->s6_addr[0] == 0xFE && (ad->s6_addr[1] & 0xC0) == 0x80) {
+        cache_[i->ifa_name] = *ad;
+      }
+    }
+    ::freeifaddrs(ifa);
+    expire_ = std::chrono::steady_clock::now() + std::chrono::minutes(1);
+  }
+
+  std::unordered_map<std::string, in6_addr> cache_;
+  std::chrono::steady_clock::time_point expire_;
+};
+
 class Tunnel {
  public:
   Tunnel(const std::string& name, std::vector<QNetworkInterface> interfaces,
@@ -294,19 +329,9 @@ class Tunnel {
       std::memcpy(buf + 80, ifr.ifr_hwaddr.sa_data, 6);
     }
 
-    QHostAddress localIp;
-    bool found = false;
-    for (const QNetworkAddressEntry& entry : iface.addressEntries()) {
-      // TODO optimize
-      if (entry.ip().isInSubnet(QHostAddress::parseSubnet("fe80::/10"))) {
-        found = true;
-        localIp = entry.ip();
-        break;
-      }
-    }
-    if (!found) return;
-    if (!ParseTextAddress(localIp.toString().toStdString(), buf + 22, 16))
-      return;
+    const unsigned char* new_addr = linkLocal_.get(iface.name().toStdString());
+    if (!new_addr) return;
+    std::memcpy(buf + 22, new_addr, 16);
     uint32_t sum = htons(0x3A);
     *reinterpret_cast<uint16_t*>(buf + 56) = 0;
     sum += *reinterpret_cast<uint16_t*>(buf + 18); // length
@@ -324,6 +349,7 @@ class Tunnel {
   const std::vector<QNetworkInterface> interfaces_;
   const PrefixList* prefixes_;
   std::string name_;
+  LinkLocal linkLocal_;
 };
 
 int main(int argc, char** argv) {
@@ -377,7 +403,7 @@ int main(int argc, char** argv) {
         QNetworkInterface::interfaceFromName(QString::fromStdString(iface));
     if (!interface.isValid()) {
       std::cerr << "Error: interface " << iface << " is not valid" << std::endl;
-      return 1;
+      std::exit(1);
     }
     // Fill the table with existing routes
     subprocess::popen pr("ip", {"-6", "route", "show", "dev", iface, "protocol",
@@ -388,13 +414,9 @@ int main(int argc, char** argv) {
       std::istringstream inbuf(line);
       std::string address;
       std::getline(inbuf, address, ' ');
-      if (address.empty()) {
-        continue;
-      }
+      if (address.empty()) continue;
       char addr[8]{};
-      if (!ParseTextAddress(address, addr, 8)) {
-        continue;
-      }
+      if (!ParseTextAddress(address, addr, 8)) continue;
       if (prefixes.contains(addr)) {
         routes.learn(address, iface);
       }
