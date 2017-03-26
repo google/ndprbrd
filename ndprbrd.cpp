@@ -15,7 +15,6 @@
 #include <QCoreApplication>
 #include <QHostAddress>
 #include <QTimer>
-#include <QHash>
 #include <QNetworkInterface>
 #include <QSocketNotifier>
 
@@ -120,7 +119,7 @@ class RouteTable {
  public:
   explicit RouteTable(const std::string& proto, std::chrono::duration<int> ttl)
       : proto_(proto), ttl_(ttl) {}
-  void learn(const std::string& addr, const QNetworkInterface& iface) {
+  void learn(const std::string& addr, const std::string& iface) {
     routes_[addr] =
         std::make_pair(iface, std::chrono::steady_clock::now() + ttl_);
   }
@@ -130,10 +129,9 @@ class RouteTable {
     for (auto it = routes_.begin(); it != routes_.end();) {
       if (it->second.second < now) {
         qDebug() << "deleting" << QString::fromStdString(it->first) << "from"
-                 << it->second.first.name();
+                 << QString::fromStdString(it->second.first);
         subprocess::popen pr("ip", {"-6", "route", "del", it->first, "dev",
-                                    it->second.first.name().toStdString(),
-                                    "protocol", proto_});
+                                    it->second.first, "protocol", proto_});
         pr.wait();
         it = routes_.erase(it);
       } else {
@@ -141,17 +139,16 @@ class RouteTable {
       }
     }
   }
-  void replaceSystem(const std::string& addr, QNetworkInterface& iface) {
-    subprocess::popen pr("ip",
-                         {"-6", "route", "replace", addr, "dev",
-                          iface.name().toStdString(), "protocol", proto_});
+  void replaceSystem(const std::string& addr, const std::string& iface) {
+    subprocess::popen pr("ip", {"-6", "route", "replace", addr, "dev", iface,
+                                "protocol", proto_});
     pr.wait();
   }
 
  private:
   std::unordered_map<
       std::string,
-      std::pair<QNetworkInterface,
+      std::pair<std::string /* iface */,
                 std::chrono::steady_clock::time_point /* expiration time */>>
       routes_;
   std::string proto_;
@@ -160,7 +157,7 @@ class RouteTable {
 
 class SocketWatcher {
  public:
-  SocketWatcher(const QNetworkInterface& iface, const PrefixList* prefixes,
+  SocketWatcher(const std::string& iface, const PrefixList* prefixes,
                 RouteTable* routes)
       : iface_(iface), prefixes_(prefixes), routes_(routes) {
     int sock = ::socket(AF_INET6, SOCK_RAW, IPPROTO_ICMPV6);
@@ -170,12 +167,11 @@ class SocketWatcher {
                 << std::endl;
       std::exit(1);
     }
-    QByteArray ifaceName = iface.name().toUtf8();
-    if (::setsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE, ifaceName.constData(),
-                     ifaceName.size()) == -1) {
+    if (::setsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE, iface.c_str(),
+                     iface.length() + 1) == -1) {
       int e = errno;
-      std::cerr << "Error: can't bind socket to " << iface.name().toStdString()
-                << ": " << std::strerror(e) << std::endl;
+      std::cerr << "Error: can't bind socket to " << iface << ": "
+                << std::strerror(e) << std::endl;
       std::exit(1);
     }
     if (::fcntl(sock, F_SETFL, ::fcntl(sock, F_GETFL) | O_NONBLOCK) == -1) {
@@ -203,7 +199,7 @@ class SocketWatcher {
     routes_->learn(remoteAddr, iface_);
     routes_->replaceSystem(remoteAddr, iface_);
   }
-  QNetworkInterface iface_;
+  const std::string iface_;
   std::unique_ptr<QSocketNotifier> notifier_;
   const PrefixList* prefixes_;
   RouteTable* routes_;
@@ -228,7 +224,7 @@ class Tunnel {
                 << std::endl;
       std::exit(1);
     }
-    name_ = QString(ifr.ifr_name);
+    name_.assign(ifr.ifr_name, ::strnlen(ifr.ifr_name, IFNAMSIZ));
     if (::fcntl(tap, F_SETFL, ::fcntl(tap, F_GETFL) | O_NONBLOCK) == -1) {
       int e = errno;
       std::cerr << "Error: can't make TAP interface non-blocking: "
@@ -261,7 +257,7 @@ class Tunnel {
                      [this](int tap) { readFrom(tap); });
   }
 
-  QString name() const { return name_; }
+  std::string name() const { return name_; }
 
  private:
   void readFrom(int tap) {
@@ -327,7 +323,7 @@ class Tunnel {
   std::unique_ptr<QSocketNotifier> tapReader_;
   const std::vector<QNetworkInterface> interfaces_;
   const PrefixList* prefixes_;
-  QString name_;
+  std::string name_;
 };
 
 int main(int argc, char** argv) {
@@ -384,8 +380,7 @@ int main(int argc, char** argv) {
       return 1;
     }
     // Fill the table with existing routes
-    subprocess::popen pr("ip", {"-6", "route", "show", "dev",
-                                interface.name().toStdString(), "protocol",
+    subprocess::popen pr("ip", {"-6", "route", "show", "dev", iface, "protocol",
                                 std::to_string(proto)});
     pr.wait();
     std::string line;
@@ -401,11 +396,11 @@ int main(int argc, char** argv) {
         continue;
       }
       if (prefixes.contains(addr)) {
-        routes.learn(address, interface);
+        routes.learn(address, iface);
       }
     }
     // Start watching the interface
-    watchers.emplace_back(interface, &prefixes, &routes);
+    watchers.emplace_back(iface, &prefixes, &routes);
     interfaces.push_back(interface);
   }
 
@@ -421,17 +416,15 @@ int main(int argc, char** argv) {
     QObject::connect(&pendulum, &QTimer::timeout, [&]() {
       int& current = pendulumCurrent;
       for (const std::string& prefix : prefixesStr) {
-        routes.replaceSystem(prefix, interfaces[current]);
+        routes.replaceSystem(prefix, interfaces[current].name().toStdString());
       }
       current = (current + 1) % interfaces.size();
     });
     pendulum.start(1000 /* ms */);
   } else {
     tunnel.reset(new Tunnel(tun, std::move(interfaces), &prefixes));
-    QNetworkInterface tun =
-        QNetworkInterface::interfaceFromName(tunnel->name());
     for (const std::string& prefix : prefixesStr) {
-      routes.replaceSystem(prefix, tun);
+      routes.replaceSystem(prefix, tunnel->name());
     }
   }
 
