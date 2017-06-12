@@ -226,7 +226,7 @@ class RouteTable {
   void delSystem(const std::string& addr, const std::string& iface) {
     std::cout << "deleting " << addr << " from " << iface << std::endl;
     subprocess::popen pr(
-        "ip", {"-6", "route", "del", addr, "dev", iface, "protocol", proto_});
+        "ip", {"-6", "route", "flush", addr, "dev", iface, "protocol", proto_});
     pr.wait();
   }
 
