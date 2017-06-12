@@ -197,6 +197,10 @@ class RouteTable {
   explicit RouteTable(const std::string& proto, std::chrono::seconds ttl)
       : proto_(proto), ttl_(ttl) {}
   void learn(const std::string& addr, const std::string& iface) {
+    auto it = routes_.find(addr);
+    if (it != routes_.end() && it->second.first != iface) {
+      delSystem(addr, it->second.first);
+    }
     routes_[addr] =
         std::make_pair(iface, std::chrono::steady_clock::now() + ttl_);
   }
@@ -205,11 +209,7 @@ class RouteTable {
     auto now = std::chrono::steady_clock::now();
     for (auto it = routes_.begin(); it != routes_.end();) {
       if (it->second.second < now) {
-        std::cout << "deleting " << it->first << " from " << it->second.first
-                  << std::endl;
-        subprocess::popen pr("ip", {"-6", "route", "del", it->first, "dev",
-                                    it->second.first, "protocol", proto_});
-        pr.wait();
+        delSystem(it->first, it->second.first);
         it = routes_.erase(it);
       } else {
         ++it;
@@ -223,6 +223,13 @@ class RouteTable {
   }
 
  private:
+  void delSystem(const std::string& addr, const std::string& iface) {
+    std::cout << "deleting " << addr << " from " << iface << std::endl;
+    subprocess::popen pr(
+        "ip", {"-6", "route", "del", addr, "dev", iface, "protocol", proto_});
+    pr.wait();
+  }
+
   std::unordered_map<
       std::string,
       std::pair<std::string /* iface */,
