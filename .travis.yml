@@ -36,11 +36,8 @@ install:
   - docker pull ubuntu:14.04
 
 script:
-  - mkdir build
-  - cd build
-  - cmake ..
+  - cd third_party/ndppd
   - make
-  - ./ndprbrd --help
 
   - docker run -dti --name=router --device=/dev/net/tun --cap-add=NET_ADMIN -v $TRAVIS_BUILD_DIR:/dir:ro ubuntu:14.04 bash
   - docker run -dti --name=isp --net=none ubuntu:14.04 bash  # ISP without network :-)
@@ -50,10 +47,7 @@ script:
   - docker ps -a
 
   - docker exec router apt-get update
-  - docker exec router apt-get install -y software-properties-common  # add-apt-repository
-  - docker exec router add-apt-repository -y ppa:jonathonf/zerotier  # ndppd
-  - docker exec router apt-get update
-  - docker exec router apt-get install -y radvd ndppd tcpdump
+  - docker exec router apt-get install -y radvd tcpdump
 
     # Connect the hosts with networks
     # Not using "docker network" to reduce confusion of which interface has which name, as multiple will be connected to router
@@ -141,10 +135,10 @@ script:
   - docker exec -d router sh -c 'tcpdump -vv -i lan2r > /var/log/lan2r.log'
 
     # Setup daemons
-  - docker exec -d router sh -c '/dir/build/ndprbrd --interface=lan1r --interface=lan2r --prefix=fd61:67f4:e87e:b396::/64 --expire=90 > /var/log/ndprbrd.log 2>&1'
+    # - docker exec -d router sh -c '/dir/build/ndprbrd --interface=lan1r --interface=lan2r --prefix=fd61:67f4:e87e:b396::/64 --expire=90 > /var/log/ndprbrd.log 2>&1'
   - docker exec router cp /dir/testdata/ndppd.conf /etc/
   - docker exec router cp /dir/testdata/radvd.conf /etc/
-  - docker exec router ndppd -d
+  - docker exec -d router sh -c '/dir/third_party/ndppd/ndppd -v -v > /var/log/ndppd.log 2>&1'
   - docker exec router radvd
 
   - sleep 5
@@ -152,7 +146,7 @@ script:
   - docker exec router ifconfig
   - docker exec router ip -6 route
 
-  - docker exec -d router sh -c 'tcpdump -vv -i ndprbrd0 > /var/log/ndprbrd0.log'
+    # - docker exec -d router sh -c 'tcpdump -vv -i ndprbrd0 > /var/log/ndprbrd0.log'
 
     # Test!
   - mispipe "docker exec host1 ping6 -c90 -O fd7d:4bec:f525:dd8e::1" ts
@@ -176,5 +170,5 @@ script:
   - docker exec router cat /var/log/wanr.log
   - docker exec router cat /var/log/lan1r.log
   - docker exec router cat /var/log/lan2r.log
-  - docker exec router cat /var/log/ndprbrd0.log
-  - docker exec router cat /var/log/ndprbrd.log
+    # - docker exec router cat /var/log/ndprbrd0.log
+  - docker exec router cat /var/log/ndppd.log

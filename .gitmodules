@@ -4,3 +4,6 @@
 [submodule "third_party/cpp-subprocess"]
 	path = third_party/cpp-subprocess
 	url = https://github.com/tsaarni/cpp-subprocess
+[submodule "third_party/ndppd"]
+	path = third_party/ndppd
+	url = https://github.com/john-sharratt/ndppd
