@@ -10,6 +10,55 @@ need to configure DHCPv6. It's designed to be used together with
 [ndppd](https://github.com/DanielAdolfsson/ndppd) for case if ISP gives
 single /64 without delegating a bigger prefix to your router.
 
+## Deprecation notice
+
+On 2017-08-07 this functionality [was
+merged](https://github.com/DanielAdolfsson/ndppd/pull/30) into ndppd itself.
+However, there are several caveats:
+
+*   If ndppd crashes for whatever reason, routes which it adds are never
+    deleted. If this risk is unacceptable for you, use ndprbrd until [this
+    issue](https://github.com/DanielAdolfsson/ndppd/issues/32) is fixed.
+*   There was no new release of ndppd yet, so your favorite distro may a
+    version which doesn't support it. In that case you need to either still use
+    ndprbrd, or build ndppd from git master.
+
+An example ndppd config with this functionality enabled:
+
+```
+proxy eth0 {
+  autowire yes
+  rule 2001:db8:1:2::/64 {
+    iface eth1
+  }
+  rule 2001:db8:1:2::/64 {
+    iface eth2
+  }
+}
+proxy eth1 {
+  autowire yes
+  rule 2001:db8:1:2::/64 {
+    iface eth0
+  }
+  rule 2001:db8:1:2::/64 {
+    iface eth2
+  }
+}
+proxy eth2 {
+  autowire yes
+  rule 2001:db8:1:2::/64 {
+    iface eth0
+  }
+  rule 2001:db8:1:2::/64 {
+    iface eth1
+  }
+}
+```
+
+If new ndppd is enough for you, you can stop reading now.
+
+# How to use ndprbrd
+
 Below are 2 sample setups - the simple one which doesn't need ndprbrd, and the
 more complicated one which makes use of it. The simple setup sets the base for
 the more complicated one.
