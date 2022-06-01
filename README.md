@@ -19,7 +19,7 @@ However, there are several caveats:
 *   If ndppd crashes for whatever reason, routes which it adds are never
     deleted. If this risk is unacceptable for you, use ndprbrd until [this
     issue](https://github.com/DanielAdolfsson/ndppd/issues/32) is fixed.
-*   There was no new release of ndppd yet, so your favorite distro may a
+*   There was no new release of ndppd yet, so your favorite distro may have a
     version which doesn't support it. In that case you need to either still use
     ndprbrd, or build ndppd from git master.
 
