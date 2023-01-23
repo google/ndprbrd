@@ -2,6 +2,8 @@
 
 # ndprbrd - NDP Routing Bridge Daemon.
 
+## The development has moved to https://github.com/DarthGandalf/ndprbrd
+
 Disclaimer: This is not an official Google product.
 
 This daemon has a very specific purpose: to give the same IPv6 prefix /64 to
